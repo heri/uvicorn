@@ -20,7 +20,7 @@ async def setup():
 
 
 READ_ROW_SQL = 'SELECT * FROM "users" WHERE id = $1'
-WRITE_ROW_SQL = 'UPDATE users SET "firstName"=$1 AND "lastName"=$2 WHERE id=$3'
+WRITE_ROW_SQL = 'UPDATE users SET "firstName"=$1, "lastName"=$2 WHERE id=$3'
 
 JSON_RESPONSE = {
     'type': 'http.response.start',
