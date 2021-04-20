@@ -1,4 +1,4 @@
-asyncpg==0.18.3
+asyncpg==0.21.0
 gunicorn==19.9.0
 jinja2==2.10.1
 ujson==1.35
