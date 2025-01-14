@@ -20,6 +20,7 @@ async def setup():
 
 
 READ_ROW_SQL = 'SELECT * FROM "users" WHERE id = $1'
+READ_USER_PASSWORD_SQL = 'SELECT * FROM "users" WHERE id = $1 AND password = $2'
 WRITE_ROW_SQL = 'UPDATE users SET "firstName"=$1, "lastName"=$2 WHERE id=$3'
 
 JSON_RESPONSE = {
@@ -59,25 +60,35 @@ loop = asyncio.get_event_loop()
 loop.run_until_complete(setup())
 
 def get_params(scope):
-    try:
-        query_string = scope['query_string']
-        firstName = parse_qs(query_string)[b'firstName']
-        lastName = parse_qs(query_string)[b'lastName']
+    if parse_qs(query_string)[b'password']
         id = parse_qs(query_string)[b'id']
-    except (KeyError, IndexError, ValueError):
-        return 1
+        password = parse_qs(query_string)[b'password']
+        return (id, password)
+    else:
+        try:
+            query_string = scope['query_string']
+            firstName = parse_qs(query_string)[b'firstName']
+            lastName = parse_qs(query_string)[b'lastName']
+            id = parse_qs(query_string)[b'id']
+        except (KeyError, IndexError, ValueError):
+            return 1
 
-    return (firstName, lastName, id)
+        return (firstName, lastName, id)
 
-# TODO This should return a user or a user session
-async def json_serialization(scope, receive, send):
-    content = json_dumps({'message': 'Hello, world!'}).encode('utf-8')
-    await send(JSON_RESPONSE)
-    await send({
-        'type': 'http.response.body',
-        'body': content,
-        'more_body': False
-    })
+async def auth_login(scope, receive, send):
+    connection = await pool.acquire()
+    params = get_params(scope)
+
+    try:
+        user = await connection.fetchrow(READ_USER_PASSWORD_SQL, params)
+        user_id = user['id']
+    finally:
+        await pool.release(connection)
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    # Placeholder for actual token generation logic
+    return {"session": f"token_for_{user_id}" }
 
 async def upsert_query(scope, receive, send):
     connection = await pool.acquire()
@@ -125,7 +136,7 @@ async def handle_404(scope, receive, send):
 
 
 routes = {
-    '/json': json_serialization,
+    '/auth/login': auth_login,
     '/webhook': upsert_query,
     '/': users,
 }

@@ -7,17 +7,6 @@ async def setup_db():
     await setup()
 
 @pytest.mark.asyncio
-async def test_json_serialization(setup_db):
-    scope = {'type': 'http', 'path': '/json', 'query_string': b''}
-    receive = lambda: None
-    send = lambda message: message
-
-    response = await main(scope, receive, send)
-    assert response['status'] == 200
-    assert response['headers'][0] == [b'content-type', b'application/json']
-    assert response['body'] == b'{"message":"Hello, world!"}'
-
-@pytest.mark.asyncio
 async def test_upsert_query(setup_db):
     scope = {'type': 'http', 'path': '/webhook', 'query_string': b'firstName=John&lastName=Doe&id=1'}
     receive = lambda: None
