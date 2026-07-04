@@ -1,11 +1,17 @@
-import asyncio
 import asyncpg
 import jinja2
 import os
 import ujson
-from random import randint
-from operator import itemgetter
-from urllib.parse import parse_qs
+
+pool = None
+json_dumps = ujson.dumps
+
+SQL_AUTH = 'SELECT id FROM "users" WHERE id=$1 AND password=$2'
+SQL_UPD = 'UPDATE users SET "firstName"=$1, "lastName"=$2 WHERE id=$3'
+SQL_ALL = 'SELECT id,"firstName","lastName" FROM users ORDER BY "firstName"'
+
+with open(os.path.join('templates', 'user.html')) as f:
+    template = jinja2.Template(f.read())
 
 
 async def setup():
@@ -19,120 +25,70 @@ async def setup():
     )
 
 
-READ_ROW_SQL = 'SELECT * FROM "users" WHERE id = $1'
-READ_USER_PASSWORD_SQL = 'SELECT * FROM "users" WHERE id = $1 AND password = $2'
-WRITE_ROW_SQL = 'UPDATE users SET "firstName"=$1, "lastName"=$2 WHERE id=$3'
+def qparse(qs):
+    d = {}
+    for p in qs.split(b'&'):
+        k, _, v = p.partition(b'=')
+        d[k.decode()] = v.decode()
+    return d
 
-JSON_RESPONSE = {
-    'type': 'http.response.start',
-    'status': 200,
-    'headers': [
-        [b'content-type', b'application/json'],
-    ]
-}
 
-HTML_RESPONSE = {
-    'type': 'http.response.start',
-    'status': 200,
-    'headers': [
-        [b'content-type', b'text/html; charset=utf-8'],
-    ]
-}
+async def reply(send, status, ctype, content):
+    n = len(content)
+    await send({
+        'type': 'http.response.start',
+        'status': status,
+        'headers': [(b'content-type', ctype), (b'content-length', str(n).encode())]
+    })
+    await send({'type': 'http.response.body', 'body': content, 'more_body': False})
 
-PLAINTEXT_RESPONSE = {
-    'type': 'http.response.start',
-    'status': 200,
-    'headers': [
-        [b'content-type', b'text/plain; charset=utf-8'],
-    ]
-}
-
-pool = None
-key = itemgetter(1)
-json_dumps = ujson.dumps
-template = None
-path = os.path.join('templates', 'user.html')
-with open(path, 'r') as template_file:
-    template_text = template_file.read()
-    template = jinja2.Template(template_text)
-
-loop = asyncio.get_event_loop()
-loop.run_until_complete(setup())
-
-def get_params(scope):
-    if parse_qs(query_string)[b'password']
-        id = parse_qs(query_string)[b'id']
-        password = parse_qs(query_string)[b'password']
-        return (id, password)
-    else:
-        try:
-            query_string = scope['query_string']
-            firstName = parse_qs(query_string)[b'firstName']
-            lastName = parse_qs(query_string)[b'lastName']
-            id = parse_qs(query_string)[b'id']
-        except (KeyError, IndexError, ValueError):
-            return 1
-
-        return (firstName, lastName, id)
 
 async def auth_login(scope, receive, send):
-    connection = await pool.acquire()
-    params = get_params(scope)
+    q = qparse(scope['query_string'])
+    id, pw = q['id'], q['password']
 
+    conn = await pool.acquire()
     try:
-        user = await connection.fetchrow(READ_USER_PASSWORD_SQL, params)
-        user_id = user['id']
+        row = await conn.fetchrow(SQL_AUTH, id, pw)
     finally:
-        await pool.release(connection)
-    
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    # Placeholder for actual token generation logic
-    return {"session": f"token_for_{user_id}" }
+        await pool.release(conn)
+
+    if row is None:
+        content = json_dumps({'detail': 'Invalid credentials'}).encode()
+        await reply(send, 401, b'application/json', content)
+        return
+
+    content = json_dumps({'session': f'token_for_{row["id"]}'}).encode()
+    await reply(send, 200, b'application/json', content)
+
 
 async def upsert_query(scope, receive, send):
-    connection = await pool.acquire()
-    params = get_params(scope)
+    q = qparse(scope['query_string'])
+    fn, ln, id = q['firstName'], q['lastName'], q['id']
 
+    conn = await pool.acquire()
     try:
-        await connection.executemany(WRITE_ROW_SQL, params)
-        user = {'id': params[0], 'firstName': params[1], 'lastName': params[2] }
+        await conn.execute(SQL_UPD, fn, ln, id)
     finally:
-        await pool.release(connection)
+        await pool.release(conn)
 
-    content = json_dumps(user).encode('utf-8')
-    await send(JSON_RESPONSE)
-    await send({
-        'type': 'http.response.body',
-        'body': content,
-        'more_body': False
-    })
+    content = json_dumps({'id': id, 'firstName': fn, 'lastName': ln}).encode()
+    await reply(send, 200, b'application/json', content)
 
 
 async def users(scope, receive, send):
-    connection = await pool.acquire()
+    conn = await pool.acquire()
     try:
-        users = await connection.fetch('SELECT * FROM users')
+        rows = await conn.fetch(SQL_ALL)
     finally:
-        await pool.release(connection)
+        await pool.release(conn)
 
-    users.sort(key=key)
-    content = template.render(users=users).encode('utf-8')
-    await send(HTML_RESPONSE)
-    await send({
-        'type': 'http.response.body',
-        'body': content,
-        'more_body': False
-    })
+    content = template.render(users=rows).encode()
+    await reply(send, 200, b'text/html; charset=utf-8', content)
+
 
 async def handle_404(scope, receive, send):
-    content = b'Not found'
-    await send(PLAINTEXT_RESPONSE)
-    await send({
-        'type': 'http.response.body',
-        'body': content,
-        'more_body': False
-    })
+    await reply(send, 200, b'text/plain; charset=utf-8', b'Not found')
 
 
 routes = {
@@ -143,6 +99,16 @@ routes = {
 
 
 async def main(scope, receive, send):
-    path = scope['path']
-    handler = routes.get(path, handle_404)
+    if scope['type'] == 'lifespan':
+        while True:
+            msg = await receive()
+            if msg['type'] == 'lifespan.startup':
+                await setup()
+                await send({'type': 'lifespan.startup.complete'})
+            elif msg['type'] == 'lifespan.shutdown':
+                await pool.close()
+                await send({'type': 'lifespan.shutdown.complete'})
+                return
+
+    handler = routes.get(scope['path'], handle_404)
     await handler(scope, receive, send)

@@ -8,6 +8,7 @@ if _is_travis:
     workers = 2
 
 bind = "0.0.0.0:8080"
+worker_class = 'uvicorn.workers.UvicornWorker'
 keepalive = 120
 errorlog = '-'
 pidfile = '/tmp/uvicorn.pid'
