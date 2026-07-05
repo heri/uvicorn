@@ -1,17 +1,17 @@
 import asyncpg
-import jinja2
+import orjson
 import os
-import ujson
+from markupsafe import escape
 
 pool = None
-json_dumps = ujson.dumps
+json_dumps = orjson.dumps
 
 SQL_AUTH = 'SELECT id FROM "users" WHERE id=$1 AND password=$2'
 SQL_UPD = 'UPDATE users SET "firstName"=$1, "lastName"=$2 WHERE id=$3'
 SQL_ALL = 'SELECT id,"firstName","lastName" FROM users ORDER BY "firstName"'
 
-with open(os.path.join('templates', 'user.html')) as f:
-    template = jinja2.Template(f.read())
+HTML_HEAD = b'<!DOCTYPE html>\n<html>\n<head><title>Users</title></head>\n<body>\n<table>\n<tr><th>id</th><th>name</th></tr>\n'
+HTML_TAIL = b'</table>\n</body>\n</html>'
 
 
 async def setup():
@@ -54,11 +54,11 @@ async def auth_login(scope, receive, send):
         await pool.release(conn)
 
     if row is None:
-        content = json_dumps({'detail': 'Invalid credentials'}).encode()
+        content = json_dumps({'detail': 'Invalid credentials'})
         await reply(send, 401, b'application/json', content)
         return
 
-    content = json_dumps({'session': f'token_for_{row["id"]}'}).encode()
+    content = json_dumps({'session': f'token_for_{row["id"]}'})
     await reply(send, 200, b'application/json', content)
 
 
@@ -72,7 +72,7 @@ async def upsert_query(scope, receive, send):
     finally:
         await pool.release(conn)
 
-    content = json_dumps({'id': id, 'firstName': fn, 'lastName': ln}).encode()
+    content = json_dumps({'id': id, 'firstName': fn, 'lastName': ln})
     await reply(send, 200, b'application/json', content)
 
 
@@ -83,7 +83,8 @@ async def users(scope, receive, send):
     finally:
         await pool.release(conn)
 
-    content = template.render(users=rows).encode()
+    body = ''.join(f'<tr><td>{r[0]}</td><td>{escape(r[1])} {escape(r[2])}</td></tr>\n' for r in rows)
+    content = HTML_HEAD + body.encode() + HTML_TAIL
     await reply(send, 200, b'text/html; charset=utf-8', content)
 
 
