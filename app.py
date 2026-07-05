@@ -88,8 +88,15 @@ async def users(scope, receive, send):
     await reply(send, 200, b'text/html; charset=utf-8', content)
 
 
+NOT_FOUND = (
+    {'type': 'http.response.start', 'status': 200, 'headers': [(b'content-type', b'text/plain; charset=utf-8'), (b'content-length', b'9')]},
+    {'type': 'http.response.body', 'body': b'Not found', 'more_body': False},
+)
+
+
 async def handle_404(scope, receive, send):
-    await reply(send, 200, b'text/plain; charset=utf-8', b'Not found')
+    await send(NOT_FOUND[0])
+    await send(NOT_FOUND[1])
 
 
 routes = {

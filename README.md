@@ -12,3 +12,5 @@ Uvicorn is implemented using:
 * The uvloop event loop.
 * The httptools HTTP parsing library.
 * The ASGI consumer interface, for interacting with the application layer.
+
+The asyncpg pool currently uses its default size (`min_size=10, max_size=10`) per worker, which may be too small or too large depending on benchmark concurrency. Tune it against a real load test (e.g. `wrk`/`hey`) rather than guessing.
